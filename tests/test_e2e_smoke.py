@@ -9,11 +9,31 @@ Run the stack first:
 Set API_BASE_URL to override the default http://localhost:8000.
 """
 
+import os
 import time
 import uuid
 
 import httpx
 import pytest
+
+@pytest.fixture
+def api_base_url():
+    """Fixture to provide the API base URL."""
+    return os.getenv("API_BASE_URL", "http://localhost:8000")
+
+def _wait_for_worker(base_url: str, timeout: float = 30.0) -> None:
+    """Wait for worker to be ready."""
+    deadline = time.time() + timeout
+    last_err = None
+    while time.time() < deadline:
+        try:
+            r = httpx.get(f"{base_url}/worker-status", timeout=2.0)
+            if r.status_code == 200:
+                return
+        except Exception as e:
+            last_err = e
+        time.sleep(1.0)
+    pytest.fail(f"Worker not reachable at {base_url}: {last_err}")
 
 
 def _wait_for_api(base_url: str, timeout: float = 30.0) -> None:
@@ -41,18 +61,31 @@ def test_health(api_base_url):
 
 def test_start_interview_and_get_status(api_base_url):
     _wait_for_api(api_base_url)
+
     r = httpx.post(
         f"{api_base_url}/start-interview",
-        json={"candidate_id": f"cand-{uuid.uuid4().hex[:8]}", "priority": "high"},
+        json={
+            "candidate_id": f"cand-{uuid.uuid4().hex[:8]}",
+            "priority": "high",
+        },
+        headers={"X-API-Token": "test-token"},
         timeout=10.0,
     )
+
     assert r.status_code == 200, r.text
+
     session_id = r.json()["session_id"]
     assert session_id.startswith("session_")
 
-    r = httpx.get(f"{api_base_url}/session-status/{session_id}", timeout=5.0)
+    r = httpx.get(
+        f"{api_base_url}/session-status/{session_id}",
+        timeout=5.0,
+    )
+
     assert r.status_code == 200
+
     body = r.json()
+
     assert body["session_id"] == session_id
     assert body["status"] in {
         "CREATED",
@@ -64,8 +97,6 @@ def test_start_interview_and_get_status(api_base_url):
         "COMPLETED",
         "FAILED",
     }
-
-
 def test_system_health(api_base_url):
     _wait_for_api(api_base_url)
     r = httpx.get(f"{api_base_url}/system-health", timeout=5.0)
@@ -118,7 +149,4 @@ def test_full_pipeline_completes(api_base_url):
             break
         time.sleep(1.0)
     assert last is not None
-    assert last["status"] in {
-        "COMPLETED",
-        "FAILED",
-    }, f"Session stuck in {last['status']}"
+    assert last["status"] in {"COMPLETED", "FAILED"}, f"Session stuck in {last['status']}"
