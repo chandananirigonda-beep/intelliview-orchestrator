@@ -12,15 +12,12 @@ from database.db import SessionLocal
 from database.models import InterviewSession
 from orchestrator.session_manager import SessionManager
 
-
 router = APIRouter()
 
 session_manager = SessionManager()
 
 
-def _get_transcript_fields(
-    session_id: str, session_data: dict
-) -> tuple[list, list]:
+def _get_transcript_fields(session_id: str, session_data: dict) -> tuple[list, list]:
     """
     Get questions_asked and answers_provided for a session.
 
@@ -61,9 +58,7 @@ def export_interview_transcript(session_id: str):
             detail="Session not found",
         )
 
-    questions, answers = _get_transcript_fields(
-        session_id, session_data
-    )
+    questions, answers = _get_transcript_fields(session_id, session_data)
 
     pdf_buffer = BytesIO()
 
@@ -104,11 +99,7 @@ def export_interview_transcript(session_id: str):
         )
 
         if isinstance(question, dict):
-            question_text = (
-                question.get("text")
-                or question.get("question")
-                or ""
-            )
+            question_text = question.get("text") or question.get("question") or ""
         else:
             question_text = str(question)
 
