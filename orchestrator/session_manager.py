@@ -79,11 +79,70 @@ class SessionManager:
     # Timeout thresholds (in seconds)
     PROCESSING_TIMEOUT = 1800  # 30 minutes
     QUEUED_TIMEOUT = 3600  # 60 minutes
+    QUESTION_ANSWER_TIMEOUT = 60
 
     def __init__(self):
         """Initialize session manager with state synchronizer"""
         self.state_sync = StateSynchronizer()
+        self._question_timers: dict[tuple[str, str], asyncio.Task] = {}
+        
+    def start_question_timer(
+        self,
+        session_id: str,
+        question_id: str,
+        on_timeout,
+    ) -> None:
+        """Start a timer for an unanswered interview question."""
+        self.cancel_question_timer(session_id, question_id)
 
+        async def _timeout() -> None:
+            try:
+                await asyncio.sleep(self.QUESTION_ANSWER_TIMEOUT)
+
+                logger.info(
+                    "Question %s timed out for session %s",
+                    question_id,
+                    session_id,
+                )
+
+                await on_timeout(session_id, question_id)
+
+            except asyncio.CancelledError:
+                logger.debug(
+                    "Question timer cancelled for session %s, question %s",
+                    session_id,
+                    question_id,
+                )
+                raise
+            except Exception:
+                logger.exception(
+                    "Error handling question timeout for session %s, question %s",
+                    session_id,
+                    question_id,
+                )
+            finally:
+                self._question_timers.pop((session_id, question_id), None)
+
+        task = asyncio.create_task(_timeout())
+        self._question_timers[(session_id, question_id)] = task
+
+    def cancel_question_timer(
+        self,
+        session_id: str,
+        question_id: str,
+    ) -> None:
+        """Cancel the timer for an answered interview question."""
+        task = self._question_timers.pop((session_id, question_id), None)
+
+        if task and not task.done():
+            task.cancel()
+
+    def cancel_session_question_timers(self, session_id: str) -> None:
+        """Cancel all active question timers for a session."""
+        for timer_session_id, question_id in list(self._question_timers):
+            if timer_session_id == session_id:
+                self.cancel_question_timer(session_id, question_id)
+                
     def create_session(
         self,
         candidate_id: str,
@@ -209,6 +268,13 @@ class SessionManager:
             interview.status = new_status
             interview.updated_at = _utcnow()
             session_db.commit()
+            if new_status in {
+                self.COMPLETED,
+                self.FAILED,
+                self.TIMEOUT,
+                self.CANCELLED,
+            }:
+                self.cancel_session_question_timers(session_id)
 
             # Update Redis cache (skip if circuit breaker is open)
             if not is_circuit_open():
@@ -347,6 +413,8 @@ class SessionManager:
             interview.end_time = _utcnow()
             interview.updated_at = _utcnow()
             session_db.commit()
+
+            self.cancel_session_question_timers(session_id)
 
             # Update Redis (skip if circuit breaker is open)
             if not is_circuit_open():
