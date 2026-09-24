@@ -21,14 +21,14 @@ import {
 import Card from "@/components/Card";
 import Button from "@/components/Button";
 import { Badge } from "@/components/Badge";
-import { Skeleton } from "@/components/States";
+import { Skeleton, ErrorState } from "@/components/States";
 import { Table, Thead, Tbody, Tr, Th, Td } from "@/components/ui";
-
-const fetcher = (url) => fetch(url).then((res) => res.json());
+import AddToCalendarButton from "@/components/AddToCalendarButton";
+import { endpoints } from "@/lib/api";
 
 export default function SchedulePage() {
-  const { data: candidateData, isLoading: loadingCandidates } = useSWR("/candidates", fetcher);
-  const { data: scheduleData, mutate: refreshSchedules, isLoading: loadingSchedules } = useSWR("/api/schedule", fetcher);
+  const { data: candidateData, error: candidateError, mutate: refreshCandidates, isLoading: loadingCandidates } = useSWR("/candidates", () => endpoints.candidates().catch(() => null));
+  const { data: scheduleData, error: scheduleError, mutate: refreshSchedules, isLoading: loadingSchedules } = useSWR("/api/schedule", () => endpoints.schedule().catch(() => null));
 
   // Form State
   const [selectedCandidateId, setSelectedCandidateId] = useState("");
@@ -93,17 +93,7 @@ export default function SchedulePage() {
         send_email: sendEmail,
       };
 
-      const res = await fetch("/api/schedule", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.detail || "Failed to schedule interview.");
-      }
+      const data = await endpoints.createSchedule(payload);
 
       setNotification({
         type: "success",
@@ -127,14 +117,8 @@ export default function SchedulePage() {
   // Status Change Handler
   const handleStatusUpdate = async (scheduleId, newStatus) => {
     try {
-      const res = await fetch(`/api/schedule/${scheduleId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      if (res.ok) {
-        refreshSchedules();
-      }
+      await endpoints.updateSchedule(scheduleId, { status: newStatus });
+      refreshSchedules();
     } catch (err) {
       console.error("Failed to update status", err);
     }
@@ -515,6 +499,17 @@ export default function SchedulePage() {
                       </Td>
                       <Td>
                         <div className="flex items-center gap-1.5">
+                          {s.status === "scheduled" && (
+                            <AddToCalendarButton
+                              title={`Interview: ${s.candidate_name}`}
+                              start={s.scheduled_at}
+                              durationMinutes={60}
+                              interviewerName={s.interviewer_id}
+                              candidateName={s.candidate_name}
+                              notes={s.notes}
+                              size="sm"
+                            />
+                          )}
                           {s.status === "scheduled" && (
                             <>
                               <button
